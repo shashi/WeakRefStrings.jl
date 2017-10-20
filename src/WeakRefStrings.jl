@@ -3,6 +3,8 @@ module WeakRefStrings
 
 export WeakRefString, WeakRefStringArray
 
+import Base: is_valid_continuation, slow_utf8_next
+
 using Nulls
 
 """
@@ -23,6 +25,8 @@ struct WeakRefString{T} <: AbstractString
     len::Int # of code units
 end
 
+pointer(s::WeakRefString) = s.ptr
+
 WeakRefString(ptr::Ptr{T}, len) where {T} = WeakRefString(ptr, Int(len))
 WeakRefString(t::Tuple{Ptr{T}, Int}) where {T} = WeakRefString(t[1], t[2])
 
@@ -30,9 +34,49 @@ const NULLSTRING = WeakRefString(Ptr{UInt8}(0), 0)
 const NULLSTRING16 = WeakRefString(Ptr{UInt16}(0), 0)
 const NULLSTRING32 = WeakRefString(Ptr{UInt32}(0), 0)
 Base.zero(::Type{WeakRefString{T}}) where {T} = WeakRefString(Ptr{T}(0), 0)
-Base.endof(x::WeakRefString) = endof(string(x))
-Base.length(x::WeakRefString) = length(string(x))
-Base.next(x::WeakRefString, i::Int) = (Char(unsafe_load(x.ptr, i)), i + 1)
+
+function Base.endof(s::WeakRefString)
+    p = pointer(s)
+    i = s.len
+    while i > 0 && is_valid_continuation(unsafe_load(p,i))
+        i -= 1
+    end
+    i
+end
+
+@inline function Base.next(s::WeakRefString, i::Int)
+    @boundscheck if (i < 1) | (i > sizeof(s))
+        throw(BoundsError(s,i))
+    end
+    p = pointer(s)
+    b = unsafe_load(p, i)
+    if b < 0x80
+        return Char(b), i + 1
+    end
+    return slow_utf8_next(p, b, i, x.len)
+end
+
+function Base.length(s::WeakRefString)
+    p = pointer(s)
+    cnum = 0
+    for i = 1:x.len
+        cnum += !is_valid_continuation(unsafe_load(p,i))
+    end
+    cnum
+end
+
+function Base.prevind(s::WeakRefString, i::Integer)
+    j = Int(i)
+    e = x.len
+    if j > e
+        return endof(s)
+    end
+    j -= 1
+    @inbounds while j > 0 && is_valid_continuation(codeunit(s,j))
+        j -= 1
+    end
+    j
+end
 
 import Base: ==
 function ==(x::WeakRefString{T}, y::WeakRefString{T}) where {T}
